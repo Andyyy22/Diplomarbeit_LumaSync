@@ -17,6 +17,15 @@ emotion_log = []  # Liste der erkannten Emotionen mit Zeit [(timestamp, emotion)
 
 # Liste aller möglichen Emotionen
 emotion_list = ["angry", "disgust", "fear", "happy", "sad", "surprise", "neutral"]
+emotion_colors = {
+    "angry": "red",
+    "disgust": "green",
+    "fear": "purple",
+    "happy": "yellow",
+    "sad": "blue",
+    "surprise": "orange",
+    "neutral": "grey"
+}
 
 def run_emotion_recognition(label):
     cap = cv2.VideoCapture(0)
@@ -66,29 +75,31 @@ fig, ax = plt.subplots(figsize=(8,5))
 canvas = FigureCanvasTkAgg(fig, master=tab_graph)
 canvas.get_tk_widget().pack(expand=True, fill="both")
 
-# Mapping Emotion → y-Wert
-emotion_y = {e: i for i, e in enumerate(emotion_list)}
-
+# Linien-Daten vorbereiten
 def update_graph():
     ax.clear()
     if emotion_log:
         times = [datetime.strptime(t, "%H:%M:%S") for t, e in emotion_log[-50:]]  # letzte 50 Einträge
-        emotions = [emotion_y[e] for t, e in emotion_log[-50:]]
-        ax.scatter(times, emotions, color='blue')
-        ax.set_yticks(list(emotion_y.values()))
-        ax.set_yticklabels(list(emotion_y.keys()))
+        for emotion in emotion_list:
+            y = [1 if e == emotion else None for t, e in emotion_log[-50:]]
+            ax.plot(times, y, color=emotion_colors[emotion], label=emotion, marker='o')
+        ax.set_yticks([1])
+        ax.set_yticklabels([""])
         ax.set_xlabel("Uhrzeit")
         ax.set_title("Emotionen der letzten Zeit")
+        ax.legend(loc="upper right")
         fig.autofmt_xdate()
     else:
-        # Platzhalterdaten, wenn noch keine Emotionen
+        # Platzhalterdaten
         placeholder_times = [datetime.now() for _ in range(5)]
-        placeholder_emotions = [random.randint(0, len(emotion_list)-1) for _ in range(5)]
-        ax.scatter(placeholder_times, placeholder_emotions, color='blue')
-        ax.set_yticks(list(emotion_y.values()))
-        ax.set_yticklabels(list(emotion_y.keys()))
+        for emotion in emotion_list:
+            y = [random.choice([1, None]) for _ in range(5)]
+            ax.plot(placeholder_times, y, color=emotion_colors[emotion], label=emotion, marker='o')
+        ax.set_yticks([1])
+        ax.set_yticklabels([""])
         ax.set_xlabel("Uhrzeit")
         ax.set_title("Emotionen der letzten Zeit (Platzhalter)")
+        ax.legend(loc="upper right")
         fig.autofmt_xdate()
 
     canvas.draw()
