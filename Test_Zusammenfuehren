@@ -1,109 +1,253 @@
 import tkinter as tk
 from tkinter import ttk
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-import matplotlib.pyplot as plt
-import random
+from matplotlib.figure import Figure
+import matplotlib.dates as mdates
 import threading
-import time
 from datetime import datetime
-import cv2
-from fer import FER
+import time
+import random
+import numpy as np
+
+# Versuche, echte Bibliotheken zu verwenden; falls nicht vorhanden, fällt der Thread in Simulationsmodus
+try:
+    import cv2
+    from fer import FER
+    FER_AVAILABLE = True
+except Exception:
+    cv2 = None
+    FER_AVAILABLE = False
 
 # ----------------------------
-# Platzhalter für Emotionserkennung
+# Konfiguration
 # ----------------------------
-emotion_detector = FER(mtcnn=True)
-emotion_log = []  # Liste der erkannten Emotionen mit Zeit [(timestamp, emotion), ...]
-
-# Liste aller möglichen Emotionen
-emotion_list = ["angry", "disgust", "fear", "happy", "sad", "surprise", "neutral"]
+# Reihenfolge/Mapping der Emotionen (Y-Werte)
+emotion_list = ["angry", "disgust", "fear", "surprise", "happy", "sad", "neutral"]
+# Map emotion -> y numeric
+emotion_y = {e: i for i, e in enumerate(reversed(emotion_list))}  # reversed so top->bottom ordering nicer
+# Farben pro Emotion
 emotion_colors = {
-    "angry": "red",
-    "disgust": "green",
-    "fear": "purple",
-    "happy": "yellow",
-    "sad": "blue",
-    "surprise": "orange",
-    "neutral": "grey"
+    "angry": "#d62728",     # red
+    "disgust": "#2ca02c",   # green
+    "fear": "#9467bd",      # purple
+    "surprise": "#ff7f0e",  # orange
+    "happy": "#e377c2",     # pink
+    "sad": "#1f77b4",       # blue
+    "neutral": "#7f7f7f"    # grey
 }
 
-def run_emotion_recognition(label):
-    cap = cv2.VideoCapture(0)
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
-        # FER Emotionserkennung
-        emotions = emotion_detector.detect_emotions(frame)
-        if emotions:
-            top_emotion = max(emotions[0]["emotions"], key=emotions[0]["emotions"].get)
-            timestamp = datetime.now().strftime("%H:%M:%S")
-            emotion_log.append((timestamp, top_emotion))
-            label.config(text=f"Aktuelle Emotion: {top_emotion}")
-        else:
-            label.config(text="Keine Emotion erkannt")
-        
-        # Beende Thread, wenn GUI geschlossen
-        if not root.winfo_exists():
-            break
-    cap.release()
-    cv2.destroyAllWindows()
+# Log der erkannten Emotionen: Liste von (datetime, emotion)
+emotion_log = []  # keep as (datetime, "happy") entries
+MAX_LOG_ENTRIES = 500  # Safety cap
+
+# If FER available, create detector
+if FER_AVAILABLE:
+    try:
+        emotion_detector = FER(mtcnn=True)
+    except Exception:
+        emotion_detector = None
+        FER_AVAILABLE = False
 
 # ----------------------------
-# GUI
+# Emotion-Erkennungs-Thread
 # ----------------------------
-root = tk.Tk()
-root.title("Emotionserkennung & Verlauf")
-root.geometry("900x600")
+def run_emotion_recognition(label_widget, stop_event):
+    """
+    Versucht, die Kamera zu öffnen und FER zu verwenden.
+    Falls das nicht möglich ist, erzeugt der Thread simulierte Emotionen.
+    Der Thread fügt (datetime.now(), emotion_str) zu emotion_log hinzu.
+    """
+    # If camera + FER available -> real mode
+    real_mode = FER_AVAILABLE and cv2 is not None
+    cap = None
+    if real_mode:
+        try:
+            cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)  # try DirectShow backend on Windows
+            if not cap.isOpened():
+                # fallback attempt without CAP_DSHOW
+                cap.release()
+                cap = cv2.VideoCapture(0)
+            if not cap.isOpened():
+                real_mode = False
+        except Exception:
+            real_mode = False
 
-tab_control = ttk.Notebook(root)
-tab_emotion = ttk.Frame(tab_control)
-tab_graph = ttk.Frame(tab_control)
-tab_control.add(tab_emotion, text="Emotionserkennung")
-tab_control.add(tab_graph, text="Emotionen-Verlauf")
-tab_control.pack(expand=1, fill="both")
-
-# Reiter 1: Emotionserkennung
-emotion_label = tk.Label(tab_emotion, text="Starte Kamera...", font=("Arial", 20))
-emotion_label.pack(pady=20)
-
-# Starte Emotionserkennung in eigenem Thread
-threading.Thread(target=run_emotion_recognition, args=(emotion_label,), daemon=True).start()
-
-# Reiter 2: Graph
-fig, ax = plt.subplots(figsize=(8,5))
-canvas = FigureCanvasTkAgg(fig, master=tab_graph)
-canvas.get_tk_widget().pack(expand=True, fill="both")
-
-# Linien-Daten vorbereiten
-def update_graph():
-    ax.clear()
-    if emotion_log:
-        times = [datetime.strptime(t, "%H:%M:%S") for t, e in emotion_log[-50:]]  # letzte 50 Einträge
-        for emotion in emotion_list:
-            y = [1 if e == emotion else None for t, e in emotion_log[-50:]]
-            ax.plot(times, y, color=emotion_colors[emotion], label=emotion, marker='o')
-        ax.set_yticks([1])
-        ax.set_yticklabels([""])
-        ax.set_xlabel("Uhrzeit")
-        ax.set_title("Emotionen der letzten Zeit")
-        ax.legend(loc="upper right")
-        fig.autofmt_xdate()
+    # If not real_mode, we do simulation
+    if not real_mode:
+        label_widget.config(text="Simulationsmodus (keine Kamera/FER verfügbar)")
     else:
-        # Platzhalterdaten
-        placeholder_times = [datetime.now() for _ in range(5)]
-        for emotion in emotion_list:
-            y = [random.choice([1, None]) for _ in range(5)]
-            ax.plot(placeholder_times, y, color=emotion_colors[emotion], label=emotion, marker='o')
-        ax.set_yticks([1])
-        ax.set_yticklabels([""])
+        label_widget.config(text="Kamera gestartet - echte Erkennung aktiv")
+
+    while not stop_event.is_set():
+        now = datetime.now()
+        if real_mode:
+            try:
+                ret, frame = cap.read()
+                if not ret:
+                    # If camera temporarily fails, wait a bit and continue
+                    time.sleep(0.5)
+                    continue
+                # FER expects RGB or BGR depending on version; .detect_emotions works with BGR (OpenCV)
+                try:
+                    faces = emotion_detector.detect_emotions(frame)
+                except Exception:
+                    faces = []
+                if faces:
+                    top_emotion = max(faces[0]["emotions"], key=faces[0]["emotions"].get)
+                    ts = datetime.now()
+                    emotion_log.append((ts, top_emotion))
+                    # cap log size
+                    if len(emotion_log) > MAX_LOG_ENTRIES:
+                        del emotion_log[: len(emotion_log) - MAX_LOG_ENTRIES]
+                    label_widget.config(text=f"Aktuelle Emotion: {top_emotion}  ({ts.strftime('%H:%M:%S')})")
+                else:
+                    # no face detected; you can log "none" or skip
+                    label_widget.config(text="Keine Emotion erkannt")
+                # small sleep to avoid spinning too fast (controls frame processing rate)
+                time.sleep(0.15)
+            except Exception:
+                # if something goes wrong, switch to simulation mode
+                real_mode = False
+                label_widget.config(text="Fehler mit Kamera/FER — wechsle zu Simulation")
+                if cap is not None:
+                    try:
+                        cap.release()
+                    except Exception:
+                        pass
+                time.sleep(0.5)
+        else:
+            # Simulation: add a random emotion roughly every second
+            sim_emotion = random.choice(emotion_list)
+            ts = datetime.now()
+            emotion_log.append((ts, sim_emotion))
+            if len(emotion_log) > MAX_LOG_ENTRIES:
+                del emotion_log[: len(emotion_log) - MAX_LOG_ENTRIES]
+            label_widget.config(text=f"[Simuliert] Aktuelle Emotion: {sim_emotion}  ({ts.strftime('%H:%M:%S')})")
+            time.sleep(1.0)
+
+    # cleanup camera if used
+    if cap is not None and cap.isOpened():
+        try:
+            cap.release()
+        except Exception:
+            pass
+
+# ----------------------------
+# GUI + Plot
+# ----------------------------
+def create_gui():
+    root = tk.Tk()
+    root.title("Emotionserkennung & Verlauf")
+    root.geometry("1000x650")
+
+    # Stop event for thread
+    stop_event = threading.Event()
+
+    notebook = ttk.Notebook(root)
+    tab_emotion = ttk.Frame(notebook)
+    tab_graph = ttk.Frame(notebook)
+    notebook.add(tab_emotion, text="Emotionserkennung")
+    notebook.add(tab_graph, text="Emotionen - Verlauf")
+    notebook.pack(expand=1, fill="both")
+
+    # --- Emotion Tab ---
+    emotion_label = tk.Label(tab_emotion, text="Starte...", font=("Arial", 18))
+    emotion_label.pack(pady=12)
+
+    # optional: area to show camera preview (not required). We skip embedding cv2 video in Tk for simplicity.
+
+    # --- Graph Tab ---
+    fig = Figure(figsize=(9,5), dpi=100)
+    ax = fig.add_subplot(111)
+    canvas = FigureCanvasTkAgg(fig, master=tab_graph)
+    canvas_widget = canvas.get_tk_widget()
+    canvas_widget.pack(expand=True, fill="both", padx=8, pady=8)
+
+    # formatting for time axis
+    time_formatter = mdates.DateFormatter("%H:%M:%S")
+
+    # Update graph function
+    def update_graph():
+        ax.clear()
+        ax.set_facecolor("white")
+
+        # draw grid and labels
+        ax.grid(True, linestyle='--', alpha=0.4)
+        ax.set_title("Emotionen über Zeit")
         ax.set_xlabel("Uhrzeit")
-        ax.set_title("Emotionen der letzten Zeit (Platzhalter)")
-        ax.legend(loc="upper right")
-        fig.autofmt_xdate()
+        ax.set_ylabel("Emotion")
 
-    canvas.draw()
-    root.after(2000, update_graph)
+        # Get last N entries (e.g., last 200)
+        N = 200
+        data = emotion_log[-N:]
 
-update_graph()
-root.mainloop()
+        if data:
+            times = [t for (t, e) in data]
+            # convert times to matplotlib floats
+            x_vals = mdates.date2num(times)
+
+            # For each emotion, build y array with NaN where not active
+            for emotion in emotion_list:
+                y_vals = [emotion_y[e] if e == emotion else np.nan for (t, e) in data]
+                # plot line (will only draw segments where not NaN)
+                ax.plot_date(
+                    x_vals,
+                    y_vals,
+                    fmt='-o',
+                    color=emotion_colors.get(emotion, "#000000"),
+                    label=emotion,
+                    linewidth=2,
+                    markersize=4
+                )
+
+            # set y ticks and labels
+            y_positions = [emotion_y[e] for e in emotion_list]
+            ax.set_yticks(y_positions)
+            ax.set_yticklabels(list(reversed(emotion_list)))  # reversed because mapping used reversed order
+            # format time axis
+            ax.xaxis.set_major_formatter(time_formatter)
+            fig.autofmt_xdate()
+            # set y limits a bit padded
+            ymin = min(y_positions) - 0.5
+            ymax = max(y_positions) + 0.5
+            ax.set_ylim(ymin, ymax)
+            ax.legend(loc="upper left", bbox_to_anchor=(1.02, 1), borderaxespad=0.)
+        else:
+            # show placeholder line for each emotion with very short sample
+            now = datetime.now()
+            times = [now - np.timedelta64(i, 's') for i in range(10)][::-1]
+            x_vals = mdates.date2num([datetime.now() - (i * (1/24/3600)) for i in range(10)][::-1])
+            for idx, emotion in enumerate(emotion_list):
+                y_vals = [emotion_y[emotion] if (j % (len(emotion_list))) == idx else np.nan for j in range(10)]
+                ax.plot_date(x_vals, y_vals, fmt='-o', color=emotion_colors.get(emotion, "#000000"),
+                             label=emotion, linewidth=2, markersize=4)
+            ax.set_yticks([emotion_y[e] for e in emotion_list])
+            ax.set_yticklabels(list(reversed(emotion_list)))
+            ax.xaxis.set_major_formatter(time_formatter)
+            fig.autofmt_xdate()
+            ax.set_ylim(min(emotion_y.values()) - 0.5, max(emotion_y.values()) + 0.5)
+            ax.legend(loc="upper left", bbox_to_anchor=(1.02, 1), borderaxespad=0.)
+
+        canvas.draw()
+        # update again after 1 second
+        root.after(1000, update_graph)
+
+    # start monitoring thread
+    worker = threading.Thread(target=run_emotion_recognition, args=(emotion_label, stop_event), daemon=True)
+    worker.start()
+
+    # start updating the graph
+    root.after(1000, update_graph)
+
+    # ensure thread stops on close
+    def on_closing():
+        stop_event.set()
+        # give thread tiny time to exit gracefully (since daemon, it's ok)
+        root.destroy()
+
+    root.protocol("WM_DELETE_WINDOW", on_closing)
+    root.mainloop()
+
+# Run GUI
+if __name__ == "__main__":
+    create_gui()
