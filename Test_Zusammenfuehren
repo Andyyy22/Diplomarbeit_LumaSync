@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import random
 import threading
 import time
+from datetime import datetime
 import cv2
 from fer import FER
 
@@ -12,7 +13,10 @@ from fer import FER
 # Platzhalter für Emotionserkennung
 # ----------------------------
 emotion_detector = FER(mtcnn=True)
-emotion_times = []
+emotion_log = []  # Liste der erkannten Emotionen mit Zeit [(timestamp, emotion), ...]
+
+# Liste aller möglichen Emotionen
+emotion_list = ["angry", "disgust", "fear", "happy", "sad", "surprise", "neutral"]
 
 def run_emotion_recognition(label):
     cap = cv2.VideoCapture(0)
@@ -20,13 +24,17 @@ def run_emotion_recognition(label):
         ret, frame = cap.read()
         if not ret:
             break
-        # FER Emotionserkennung (nur Top-Emotion)
+        # FER Emotionserkennung
         emotions = emotion_detector.detect_emotions(frame)
         if emotions:
             top_emotion = max(emotions[0]["emotions"], key=emotions[0]["emotions"].get)
-            emotion_times.append(top_emotion)
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            emotion_log.append((timestamp, top_emotion))
             label.config(text=f"Aktuelle Emotion: {top_emotion}")
-        # Abbruch, wenn Fenster geschlossen
+        else:
+            label.config(text="Keine Emotion erkannt")
+        
+        # Beende Thread, wenn GUI geschlossen
         if not root.winfo_exists():
             break
     cap.release()
@@ -36,44 +44,55 @@ def run_emotion_recognition(label):
 # GUI
 # ----------------------------
 root = tk.Tk()
-root.title("Emotionserkennung & Statistik")
-root.geometry("800x600")
+root.title("Emotionserkennung & Verlauf")
+root.geometry("900x600")
 
 tab_control = ttk.Notebook(root)
 tab_emotion = ttk.Frame(tab_control)
 tab_graph = ttk.Frame(tab_control)
 tab_control.add(tab_emotion, text="Emotionserkennung")
-tab_control.add(tab_graph, text="Emotionen-Graph")
+tab_control.add(tab_graph, text="Emotionen-Verlauf")
 tab_control.pack(expand=1, fill="both")
 
 # Reiter 1: Emotionserkennung
 emotion_label = tk.Label(tab_emotion, text="Starte Kamera...", font=("Arial", 20))
 emotion_label.pack(pady=20)
 
-# Starte Emotionserkennung in Thread
+# Starte Emotionserkennung in eigenem Thread
 threading.Thread(target=run_emotion_recognition, args=(emotion_label,), daemon=True).start()
 
 # Reiter 2: Graph
-fig, ax = plt.subplots(figsize=(5,4))
+fig, ax = plt.subplots(figsize=(8,5))
 canvas = FigureCanvasTkAgg(fig, master=tab_graph)
 canvas.get_tk_widget().pack(expand=True, fill="both")
 
+# Mapping Emotion → y-Wert
+emotion_y = {e: i for i, e in enumerate(emotion_list)}
+
 def update_graph():
     ax.clear()
-    if emotion_times:
-        # Zähle vorkommende Emotionen
-        counts = {e: emotion_times.count(e) for e in set(emotion_times[-50:])}  # letzte 50 Einträge
-        ax.bar(counts.keys(), counts.values(), color='skyblue')
+    if emotion_log:
+        times = [datetime.strptime(t, "%H:%M:%S") for t, e in emotion_log[-50:]]  # letzte 50 Einträge
+        emotions = [emotion_y[e] for t, e in emotion_log[-50:]]
+        ax.scatter(times, emotions, color='blue')
+        ax.set_yticks(list(emotion_y.values()))
+        ax.set_yticklabels(list(emotion_y.keys()))
+        ax.set_xlabel("Uhrzeit")
+        ax.set_title("Emotionen der letzten Zeit")
+        fig.autofmt_xdate()
     else:
-        # Platzhalter-Daten
-        emotions = ["happy", "sad", "angry", "surprise", "neutral"]
-        counts = [random.randint(0,10) for _ in emotions]
-        ax.bar(emotions, counts, color='skyblue')
-    ax.set_ylabel("Anzahl")
-    ax.set_title("Emotionen der letzten Stunde (simuliert)")
+        # Platzhalterdaten, wenn noch keine Emotionen
+        placeholder_times = [datetime.now() for _ in range(5)]
+        placeholder_emotions = [random.randint(0, len(emotion_list)-1) for _ in range(5)]
+        ax.scatter(placeholder_times, placeholder_emotions, color='blue')
+        ax.set_yticks(list(emotion_y.values()))
+        ax.set_yticklabels(list(emotion_y.keys()))
+        ax.set_xlabel("Uhrzeit")
+        ax.set_title("Emotionen der letzten Zeit (Platzhalter)")
+        fig.autofmt_xdate()
+
     canvas.draw()
-    root.after(2000, update_graph)  # alle 2 Sekunden aktualisieren
+    root.after(2000, update_graph)
 
 update_graph()
-
 root.mainloop()
