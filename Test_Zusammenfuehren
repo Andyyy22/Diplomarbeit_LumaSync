@@ -1,0 +1,79 @@
+import tkinter as tk
+from tkinter import ttk
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import matplotlib.pyplot as plt
+import random
+import threading
+import time
+import cv2
+from fer import FER
+
+# ----------------------------
+# Platzhalter für Emotionserkennung
+# ----------------------------
+emotion_detector = FER(mtcnn=True)
+emotion_times = []
+
+def run_emotion_recognition(label):
+    cap = cv2.VideoCapture(0)
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        # FER Emotionserkennung (nur Top-Emotion)
+        emotions = emotion_detector.detect_emotions(frame)
+        if emotions:
+            top_emotion = max(emotions[0]["emotions"], key=emotions[0]["emotions"].get)
+            emotion_times.append(top_emotion)
+            label.config(text=f"Aktuelle Emotion: {top_emotion}")
+        # Abbruch, wenn Fenster geschlossen
+        if not root.winfo_exists():
+            break
+    cap.release()
+    cv2.destroyAllWindows()
+
+# ----------------------------
+# GUI
+# ----------------------------
+root = tk.Tk()
+root.title("Emotionserkennung & Statistik")
+root.geometry("800x600")
+
+tab_control = ttk.Notebook(root)
+tab_emotion = ttk.Frame(tab_control)
+tab_graph = ttk.Frame(tab_control)
+tab_control.add(tab_emotion, text="Emotionserkennung")
+tab_control.add(tab_graph, text="Emotionen-Graph")
+tab_control.pack(expand=1, fill="both")
+
+# Reiter 1: Emotionserkennung
+emotion_label = tk.Label(tab_emotion, text="Starte Kamera...", font=("Arial", 20))
+emotion_label.pack(pady=20)
+
+# Starte Emotionserkennung in Thread
+threading.Thread(target=run_emotion_recognition, args=(emotion_label,), daemon=True).start()
+
+# Reiter 2: Graph
+fig, ax = plt.subplots(figsize=(5,4))
+canvas = FigureCanvasTkAgg(fig, master=tab_graph)
+canvas.get_tk_widget().pack(expand=True, fill="both")
+
+def update_graph():
+    ax.clear()
+    if emotion_times:
+        # Zähle vorkommende Emotionen
+        counts = {e: emotion_times.count(e) for e in set(emotion_times[-50:])}  # letzte 50 Einträge
+        ax.bar(counts.keys(), counts.values(), color='skyblue')
+    else:
+        # Platzhalter-Daten
+        emotions = ["happy", "sad", "angry", "surprise", "neutral"]
+        counts = [random.randint(0,10) for _ in emotions]
+        ax.bar(emotions, counts, color='skyblue')
+    ax.set_ylabel("Anzahl")
+    ax.set_title("Emotionen der letzten Stunde (simuliert)")
+    canvas.draw()
+    root.after(2000, update_graph)  # alle 2 Sekunden aktualisieren
+
+update_graph()
+
+root.mainloop()
